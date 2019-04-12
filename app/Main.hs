@@ -11,28 +11,35 @@ import Control.Applicative
 import Control.Monad.ST
 import Data.Functor (($>))
 
+type Gram ast = forall e r. Grammar r (Prod r e Char ast)
+type ParserOutput e ast = ([ast], Report e String)
+
+
 ----- Sketch -----
 data Sketch = Term BitVecTerm | Prop BitVecProp deriving Show
-sketchGrammar :: forall r. Grammar r (Prod r () Char Sketch)
-sketchGrammar =  (\bv zolBv -> Term <$> bv <|> Prop <$> zolBv) <$> bvTermGrammar <*> bvPropGrammar 
+sketchGrammar :: Gram Sketch
+sketchGrammar =  (\bv zolBv -> Term <$> bv <|> Prop <$> zolBv) 
+                  <$> bvTermGrammar <*> bvPropGrammar 
 
-sketchParser :: String -> ([Sketch], Report () String)
+sketchParser :: String -> ParserOutput () Sketch
 sketchParser = generateParser sketchGrammar
  
+
 ----- Bit Vector Proposition -----
 data BitVecProp = BvPropApp BitVecTerm BvProp BitVecTerm
   deriving Show
 data BvProp = BvEq | BvNe | BvLt | BvGt | BvLe | BvGe
   deriving Show
 
-bvPropGrammar :: forall r. Grammar r (Prod r () Char BitVecProp)
+bvPropGrammar :: Gram BitVecProp
 bvPropGrammar = (\bv -> BvPropApp <$> bv <*> bv_prop <*> bv) <$> bvTermGrammar
   where bv_prop =     BvEq <$ string "=_bv" <|> BvNe <$ string "/=_bv" 
                   <|> BvGt <$ string ">" <|> BvGe <$ string ">=" 
                   <|> BvLt <$ string "<" <|> BvLe <$ string "<="
 
-bvPropParser :: String -> ([BitVecProp], Report () String)
+bvPropParser :: String -> ParserOutput () BitVecProp
 bvPropParser = generateParser bvPropGrammar
+
 
 ----- Bit Vector Term -----
 data BitVecTerm = Hole | BitVecVal Int | Var String | BvFunApp BitVecTerm BvFun BitVecTerm
@@ -40,7 +47,7 @@ data BitVecTerm = Hole | BitVecVal Int | Var String | BvFunApp BitVecTerm BvFun 
 data BvFun = Bwand | Lshift | Rshift | Plus | Minus
   deriving Show
 
-bvTermGrammar :: forall r. Grammar r (Prod r () Char BitVecTerm)
+bvTermGrammar :: Gram BitVecTerm
 bvTermGrammar = mdo
   bv1 <- rule $ (BvFunApp <$> bv1) <*> bv_op1 <*> bv1 <|> bv2
   bv2 <- rule $ (BvFunApp <$> bv2) <*> bv_op2 <*> bv2 <|> bv3
@@ -54,8 +61,9 @@ bvTermGrammar = mdo
 
   return bv1
 
-bvTermParser :: String -> ([BitVecTerm], Report () String)
+bvTermParser :: String -> ParserOutput () BitVecTerm
 bvTermParser = generateParser bvTermGrammar
+
 
 ----- Low Level Parsers -----
 ws = many $ satisfy isSpace :: Prod r e Char String
