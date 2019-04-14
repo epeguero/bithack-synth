@@ -1,6 +1,9 @@
 {-# LANGUAGE RecursiveDo #-} 
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Main where
 
@@ -8,17 +11,81 @@ import System.Environment
 import Data.Char
 import Text.Earley
 import Control.Applicative
-import Control.Monad.ST
+import Data.Monoid (mconcat)
 import Data.Functor (($>))
+import Data.Foldable (asum)
 
-type Gram ast = forall e r. Grammar r (Prod r e Char ast)
+type Gram r e ast = Grammar r (Prod r e Char ast)
 type ParserOutput e ast = ([ast], Report e String)
 
+----- Supported Theories -----
+data Term t = VarT String | ValT (Value t) | BinT (Term t) (FunT t) (Term t)
+data Prop t = EqProp (Term t) (Term t) | BinProp (Term t) (FunP t) (Term t)
+
+class SupportedTheory t where
+  data Value t :: *
+  data FunT t :: *
+  data FunP t :: *
+
+  value :: Prod r e Char (Value t)
+  funTPrec :: [[FunT t]]
+  funPPrec :: [[FunP t]]
+  funTtoString :: FunT t -> String
+
+  term :: Gram r e (Term t)
+  term = foldr ((=<<) . termPrec) base funTPrec
+    where 
+      termPrec :: [FunT t] -> Prod r e Char (Term t) -> Gram r e (Term t)
+      termPrec ops next = mdo  
+        t <- rule $ BinT <$> t <*> op <*> t <|> next
+        op <- rule $ 
+              asum --foldr (<|>) empty 
+              . map (\op -> op <$ (string . funTtoString $ op))
+              $ ops
+        return t
+
+      base :: Gram r e (Term t)
+      base = rule $ ValT <$> value <|> VarT <$> var
+
+  termParser :: String -> ParserOutput e (Term t)
+  termParser = fullParses p
+    where
+      p :: Parser e String (Term t)
+      p = parser term
+
+
+
+data BitVectorTheory
+instance SupportedTheory BitVectorTheory where
+  data Value BitVectorTheory = HoleBv | BitVecVal Int
+    deriving Show
+  data FunT BitVectorTheory = Bwand | Lshift | Rshift | Plus | Minus
+    deriving Show
+  data FunP BitVectorTheory = BvEq | BvNe | BvLt | BvGt | BvLe | BvGe
+    deriving Show
+
+  value = HoleBv <$ string "??" <|> BitVecVal <$> number
+
+  funTPrec = [[Bwand], [Lshift, Rshift], [Plus, Minus]]
+  funPPrec = []
+
+  funTtoString Bwand = "&"
+  funTtoString Lshift = "<<"
+  funTtoString Rshift = ">>"
+  funTtoString Plus = "+"
+  funTtoString Minus = "-"
+
+
+instance Show (Term BitVectorTheory) where
+  show (VarT x) = show x
+  show (ValT v) = show v
+  show (BinT t1 op t2) = "( " ++ show t1 ++ " " ++ show op ++ " " ++ show t2 ++ " )"
+{-
 
 ----- Sketch -----
-data Sketch = Term BitVecTerm | Prop BitVecProp deriving Show
+data Sketch = TermBv BitVecTerm | PropBv BitVecProp deriving Show
 sketchGrammar :: Gram Sketch
-sketchGrammar =  (\bv zolBv -> Term <$> bv <|> Prop <$> zolBv) 
+sketchGrammar =  (\bv zolBv -> TermBv <$> bv <|> PropBv <$> zolBv) 
                   <$> bvTermGrammar <*> bvPropGrammar 
 
 sketchParser :: String -> ParserOutput () Sketch
@@ -50,8 +117,6 @@ data BvFun = Bwand | Lshift | Rshift | Plus | Minus
 bvTermGrammar :: Gram BitVecTerm
 bvTermGrammar = mdo
   bv1 <- rule $ (BvFunApp <$> bv1) <*> bv_op1 <*> bv1 <|> bv2
-  bv2 <- rule $ (BvFunApp <$> bv2) <*> bv_op2 <*> bv2 <|> bv3
-  bv3 <- rule $ (BvFunApp <$> bv3) <*> bv_op3 <*> bv3 <|> base
 
   bv_op1 <- rule $ Bwand <$ string "&"
   bv_op2 <- rule $ Lshift <$ string "<<" <|> Rshift <$ string ">>"
@@ -65,6 +130,12 @@ bvTermParser :: String -> ParserOutput () BitVecTerm
 bvTermParser = generateParser bvTermGrammar
 
 
+----- Zero-order logic -----
+-- data ZOL t = BoolZol Bool | Not (Zol t) | BinPropZol (ZOL t) BinOpZol (Zol t) | TheoryProp t
+-- data BinOpZol = AndZol | OrZol | ImpliesZol
+
+
+-}
 ----- Low Level Parsers -----
 ws = many $ satisfy isSpace :: Prod r e Char String
 leadingWs p = ws *> p 
@@ -81,17 +152,7 @@ var = leadingWs $ some $ satisfy isAlpha :: Prod r e Char String
 main :: IO()
 main = do
   x:_ <- getArgs
-  printParses $ bvTermParser x
+  bvTermPrint x 
 
-printParses :: forall e a. (Show e, Show a) => ([a], Report e String) -> IO ()
-printParses = print
-
-generateParser :: forall e a. 
-          (forall r. Grammar r (Prod r e Char a)) -> 
-          String -> ([a], Report e String)
-generateParser g = f
-  where f :: String -> ([a], Report e String)
-        f = fullParses p
-
-        p :: Parser e String a
-        p = parser g
+bvTermPrint :: String -> IO ()
+bvTermPrint s = print (termParser s :: ParserOutput () (Term BitVectorTheory))
