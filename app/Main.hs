@@ -20,7 +20,7 @@ type ParserOutput e ast = ([ast], Report e String)
 data Term t = VarT String | ValT (Value t) | BinT (Term t) (FunT t) (Term t)
 data Prop t = BinP (Term t) (FunP t) (Term t)
 
-class SupportedTheory t where
+class (Show (FunT t), Show (FunP t)) => SupportedTheory t where
   data Value t :: *
   data FunT t :: *
   data FunP t :: *
@@ -28,8 +28,6 @@ class SupportedTheory t where
   value :: Prod r e Char (Value t)
   funTPrec :: [[FunT t]]
   funPPrec :: [[FunP t]]
-  funTtoString :: FunT t -> String
-  funPtoString :: FunP t -> String
 
   term :: Gram r e (Term t)
   term = foldr ((=<<) . termPrec) base funTPrec
@@ -39,7 +37,7 @@ class SupportedTheory t where
         t <- rule $ BinT <$> t <*> op <*> t <|> next
         op <- rule $ 
               asum --foldr (<|>) empty 
-              . map (\op -> op <$ (string . funTtoString $ op))
+              . map (\op -> op <$ (string . show $ op))
               $ ops
         return t
 
@@ -61,7 +59,7 @@ class SupportedTheory t where
         p <- rule $ BinP <$> t <*> op <*> t <|> next
         op <- rule $ 
               asum --foldr (<|>) empty 
-              . map (\op -> op <$ (string . funPtoString $ op))
+              . map (\op -> op <$ (string . show $ op))
               $ ops
         return p) =<< term
 
@@ -72,32 +70,33 @@ class SupportedTheory t where
       p = parser prop
 
 
+
 data BitVectorTheory
 instance SupportedTheory BitVectorTheory where
   data Value BitVectorTheory = HoleBv | BitVecVal Int
     deriving Show
   data FunT BitVectorTheory = Bwand | Lshift | Rshift | Plus | Minus
-    deriving Show
   data FunP BitVectorTheory = BvEq | BvNe | BvLt | BvGt | BvLe | BvGe
-    deriving Show
 
   value = HoleBv <$ string "??" <|> BitVecVal <$> number
 
   funTPrec = [[Bwand], [Lshift, Rshift], [Plus, Minus]]
   funPPrec = [[BvEq, BvNe], [BvGt, BvLt, BvGe, BvLe]]
 
-  funTtoString Bwand = "&"
-  funTtoString Lshift = "<<"
-  funTtoString Rshift = ">>"
-  funTtoString Plus = "+"
-  funTtoString Minus = "-"
+instance Show (FunT BitVectorTheory) where
+  show Bwand = "&"
+  show Lshift = "<<"
+  show Rshift = ">>"
+  show Plus = "+"
+  show Minus = "-"
 
-  funPtoString BvEq = "=_bv"
-  funPtoString BvNe = "/=_bv"
-  funPtoString BvLt = "<"
-  funPtoString BvGt = ">"
-  funPtoString BvLe = "<="
-  funPtoString BvGe = ">="
+instance Show (FunP BitVectorTheory) where
+  show BvEq = "=_bv"
+  show BvNe = "/=_bv"
+  show BvLt = "<"
+  show BvGt = ">"
+  show BvLe = "<="
+  show BvGe = ">="
 
 
 instance Show (Term BitVectorTheory) where
