@@ -11,8 +11,6 @@ import System.Environment
 import Data.Char
 import Text.Earley
 import Control.Applicative
-import Data.Monoid (mconcat)
-import Data.Functor (($>))
 import Data.Foldable (asum)
 
 type Gram r e ast = Grammar r (Prod r e Char ast)
@@ -20,7 +18,7 @@ type ParserOutput e ast = ([ast], Report e String)
 
 ----- Supported Theories -----
 data Term t = VarT String | ValT (Value t) | BinT (Term t) (FunT t) (Term t)
-data Prop t = EqProp (Term t) (Term t) | BinProp (Term t) (FunP t) (Term t)
+data Prop t = BinP (Term t) (FunP t) (Term t)
 
 class SupportedTheory t where
   data Value t :: *
@@ -31,6 +29,7 @@ class SupportedTheory t where
   funTPrec :: [[FunT t]]
   funPPrec :: [[FunP t]]
   funTtoString :: FunT t -> String
+  funPtoString :: FunP t -> String
 
   term :: Gram r e (Term t)
   term = foldr ((=<<) . termPrec) base funTPrec
@@ -54,6 +53,24 @@ class SupportedTheory t where
       p = parser term
 
 
+  prop :: Gram r e (Prop t)
+  prop = foldr ((=<<) . propPrec) (rule empty) funPPrec
+    where 
+      propPrec :: [FunP t] -> Prod r e Char (Prop t) -> Gram r e (Prop t)
+      propPrec ops next = (\t -> mdo  
+        p <- rule $ BinP <$> t <*> op <*> t <|> next
+        op <- rule $ 
+              asum --foldr (<|>) empty 
+              . map (\op -> op <$ (string . funPtoString $ op))
+              $ ops
+        return p) =<< term
+
+  propParser :: String -> ParserOutput e (Prop t)
+  propParser = fullParses p
+    where
+      p :: Parser e String (Prop t)
+      p = parser prop
+
 
 data BitVectorTheory
 instance SupportedTheory BitVectorTheory where
@@ -67,7 +84,7 @@ instance SupportedTheory BitVectorTheory where
   value = HoleBv <$ string "??" <|> BitVecVal <$> number
 
   funTPrec = [[Bwand], [Lshift, Rshift], [Plus, Minus]]
-  funPPrec = []
+  funPPrec = [[BvEq, BvNe], [BvGt, BvLt, BvGe, BvLe]]
 
   funTtoString Bwand = "&"
   funTtoString Lshift = "<<"
@@ -75,11 +92,22 @@ instance SupportedTheory BitVectorTheory where
   funTtoString Plus = "+"
   funTtoString Minus = "-"
 
+  funPtoString BvEq = "=_bv"
+  funPtoString BvNe = "/=_bv"
+  funPtoString BvLt = "<"
+  funPtoString BvGt = ">"
+  funPtoString BvLe = "<="
+  funPtoString BvGe = ">="
+
 
 instance Show (Term BitVectorTheory) where
   show (VarT x) = show x
   show (ValT v) = show v
   show (BinT t1 op t2) = "( " ++ show t1 ++ " " ++ show op ++ " " ++ show t2 ++ " )"
+
+instance Show (Prop BitVectorTheory) where
+  show (BinP t1 op t2) = "( " ++ show t1 ++ " " ++ show op ++ " " ++ show t2 ++ " )"
+
 {-
 
 ----- Sketch -----
@@ -152,7 +180,10 @@ var = leadingWs $ some $ satisfy isAlpha :: Prod r e Char String
 main :: IO()
 main = do
   x:_ <- getArgs
-  bvTermPrint x 
+  bvTerm x 
 
-bvTermPrint :: String -> IO ()
-bvTermPrint s = print (termParser s :: ParserOutput () (Term BitVectorTheory))
+bvTerm :: String -> IO ()
+bvTerm s = print (termParser s :: ParserOutput () (Term BitVectorTheory))
+
+bvProp:: String -> IO ()
+bvProp s = print (propParser s :: ParserOutput () (Prop BitVectorTheory))
